@@ -239,6 +239,88 @@ const ASPECT_ATTACKS = {
   Void:    { name: 'ERASURE',         desc: 'Part of the enemy simply stops existing.' },
 };
 
+const CLASS_VECTORS = {
+  Heir:   { verb: 'embodies', scalar: 0.9 },
+  Seer:   { verb: 'interprets', scalar: 0.8 },
+  Page:   { verb: 'amplifies', scalar: 1.0 },
+  Maid:   { verb: 'creates', scalar: 1.0 },
+  Sylph:  { verb: 'restores', scalar: 0.85 },
+  Rogue:  { verb: 'redistributes', scalar: 0.9 },
+  Knight: { verb: 'weaponizes', scalar: 1.1 },
+  Witch:  { verb: 'bends', scalar: 1.1 },
+  Mage:   { verb: 'understands through suffering', scalar: 1.05 },
+  Prince: { verb: 'destroys', scalar: 1.2 },
+  Thief:  { verb: 'steals', scalar: 1.1 },
+  Bard:   { verb: 'invites destruction through', scalar: 1.0 },
+};
+
+const ASPECT_METAPHYSICS = {
+  Breath: (player, enemy, state, scale) => {
+    state.fleeBonus = (state.fleeBonus || 0) + (0.1 * scale);
+    state.enemyConfused = (state.enemyConfused || 0) + 1;
+    return { text: 'Breath loosens fate-lines: movement expands and escape routes open.' };
+  },
+  Blood: (player, enemy, state, scale) => {
+    state.playerShield = true;
+    state.enemyAtkDebuff = (state.enemyAtkDebuff || 0) + Math.floor(enemy.atk * 0.08 * scale);
+    return { text: 'Blood reinforces bonds: your position stabilizes and the foe loses momentum.' };
+  },
+  Life: (player, enemy, state, scale) => {
+    const heal = Math.floor(player.maxHp * 0.12 * scale);
+    player.heal(heal);
+    return { text: `Life surges through paradox space, restoring ${heal} HP.` };
+  },
+  Doom: (player, enemy, state, scale) => {
+    const cost = Math.max(1, Math.floor(player.maxHp * 0.05 * scale));
+    const dmg = Math.max(1, Math.floor(enemy.maxHp * 0.08 * scale));
+    player.takeDamage(cost);
+    enemy.hp = Math.max(0, enemy.hp - dmg);
+    return { text: `Doom exacts ${cost} HP from you to mark inevitable collapse (${dmg} DMG).`, damage: dmg };
+  },
+  Light: (player, enemy, state, scale) => {
+    state.luckBoost = (state.luckBoost || 0) + (0.08 * scale);
+    const bonus = Math.floor(player.totalAtk() * 0.2 * scale);
+    enemy.hp = Math.max(0, enemy.hp - bonus);
+    return { text: `Light aligns probabilities in your favor (${bonus} DMG).`, damage: bonus };
+  },
+  Void: (player, enemy, state, scale) => {
+    state.enemyRevealed = false;
+    state.enemyAtkDebuff = (state.enemyAtkDebuff || 0) + Math.floor(enemy.atk * 0.12 * scale);
+    return { text: 'Void obscures certainty and hollows enemy intent.' };
+  },
+  Time: (player, enemy, state, scale) => {
+    const dmg = Math.floor(player.totalAtk() * 0.35 * scale);
+    enemy.hp = Math.max(0, enemy.hp - dmg);
+    return { text: `Time overlays doomed splinters into a single strike (${dmg} DMG).`, damage: dmg };
+  },
+  Space: (player, enemy, state, scale) => {
+    state.enemyDefDebuff = (state.enemyDefDebuff || 0) + Math.floor(((enemy.def || 0) + 6) * 0.5 * scale);
+    return { text: 'Space distorts scale: the enemy loses structural coherence.' };
+  },
+  Mind: (player, enemy, state, scale) => {
+    state.enemyConfused = (state.enemyConfused || 0) + 1;
+    state.enemyAtkDebuff = (state.enemyAtkDebuff || 0) + Math.floor(enemy.atk * 0.1 * scale);
+    return { text: 'Mind forks decision trees; the opponent hesitates in contradiction.' };
+  },
+  Heart: (player, enemy, state, scale) => {
+    const dmg = Math.floor(enemy.maxHp * 0.07 * scale);
+    enemy.hp = Math.max(0, enemy.hp - dmg);
+    return { text: `Heart attacks identity itself (${dmg} DMG).`, damage: dmg };
+  },
+  Hope: (player, enemy, state, scale) => {
+    state.atkMultiplier = Math.max(state.atkMultiplier || 1, 1 + (0.25 * scale));
+    state.atkMultiplierTurns = Math.max(state.atkMultiplierTurns || 0, 2);
+    return { text: 'Hope hardens belief into force. Your convictions become damage.' };
+  },
+  Rage: (player, enemy, state, scale) => {
+    const dmg = Math.floor(player.totalAtk() * 0.45 * scale);
+    const recoil = Math.max(1, Math.floor(player.maxHp * 0.04 * scale));
+    enemy.hp = Math.max(0, enemy.hp - dmg);
+    player.takeDamage(recoil);
+    return { text: `Rage shatters illusion: ${dmg} DMG dealt, ${recoil} recoil taken.`, damage: dmg };
+  },
+};
+
 // ─── Strife Engine ────────────────────────────────────────────────────────────
 export class StrifeEngine {
   constructor(player, enemy) {
@@ -260,6 +342,8 @@ export class StrifeEngine {
       enemyDefDebuff:    0,
       enemyConfused:     0,
       enemyRevealed:     false,
+      luckBoost:         0,
+      fleeBonus:         0,
       rewriteTurns:      0,
       siphonTurns:       0,
       pilferageTurns:    0,
@@ -291,7 +375,8 @@ export class StrifeEngine {
 
     const mult = this.state.atkMultiplier || 1;
     const bonus = this.state.atkBonus || 0;
-    const crit = Math.random() < 0.12;
+    const critChance = Math.min(0.45, 0.12 + (this.state.luckBoost || 0));
+    const crit = Math.random() < critChance;
     const base = this.player.totalAtk() + bonus;
     const dmg  = Math.floor(base * mult * (crit ? 1.8 : 1) + Math.random() * 8);
 
@@ -349,6 +434,7 @@ export class StrifeEngine {
 
     this.state.classUsed = true;
     const result = ability.execute(this.player, this.enemy, this.state);
+    this._applyClassAspectResonance('class');
 
     this._decrementBuffs();
     this._emit();
@@ -368,16 +454,18 @@ export class StrifeEngine {
     }
 
     const attack = ASPECT_ATTACKS[this.player.aspect] || { name: 'ASPECT STRIKE', desc: 'Raw aspect power.' };
+    const vector = CLASS_VECTORS[this.player.playerClass] || { verb: 'channels', scalar: 1 };
     const hpCost = Math.floor(this.player.hp * 0.15);
     this.player.takeDamage(hpCost);
-    const dmg = Math.floor(this.player.totalAtk() * 1.8 + Math.random() * 10);
+    const dmg = Math.floor(this.player.totalAtk() * (1.45 + (vector.scalar * 0.35)) + Math.random() * 10);
 
     this.state.aspectUsed = true;
     this.enemy.hp = Math.max(0, this.enemy.hp - dmg);
     this.state.log.push({
-      text: `> ${attack.name}! ${attack.desc} (${dmg} DMG, cost: ${hpCost} HP)`,
+      text: `> ${attack.name}! ${attack.desc} (${dmg} DMG, cost: ${hpCost} HP)\n> ${this.player.playerClass} ${vector.verb} ${this.player.aspect}.`,
       cls:  'log-special',
     });
+    this._applyClassAspectResonance('aspect');
 
     this._decrementBuffs();
     this._emit();
@@ -390,7 +478,7 @@ export class StrifeEngine {
   // ─── Action: Flee ──────────────────────────────────────────────────────────
   flee() {
     if (!this._isPlayerTurn()) return null;
-    const success = Math.random() < 0.6;
+    const success = Math.random() < Math.min(0.9, 0.6 + (this.state.fleeBonus || 0));
     if (success) {
       this.state.fled = true;
       this.state.over = true;
@@ -499,6 +587,17 @@ export class StrifeEngine {
       player: { hp: this.player.hp, maxHp: this.player.maxHp, hpPct: this.player.hpPercent() },
       enemy:  { hp: this.enemy.hp, maxHp: this.enemy.maxHp, hpPct: Math.floor(this.enemy.hp / this.enemy.maxHp * 100) },
     };
+  }
+
+  _applyClassAspectResonance(source) {
+    const vector = CLASS_VECTORS[this.player.playerClass] || { verb: 'channels', scalar: 1 };
+    const apply = ASPECT_METAPHYSICS[this.player.aspect];
+    if (!apply) return;
+    const result = apply(this.player, this.enemy, this.state, vector.scalar) || {};
+    this.state.log.push({
+      text: `> CLASSPECT RESONANCE (${source.toUpperCase()}): ${this.player.playerClass} ${vector.verb} ${this.player.aspect}. ${result.text || ''}`.trim(),
+      cls: 'log-system',
+    });
   }
 
   snapshot() {

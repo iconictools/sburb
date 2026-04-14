@@ -69,6 +69,7 @@ export class Game {
       dreamSelfAwoken:    false,
       godTierAscended:    false,
       countdownActive:    false,
+      entryFailed:        false,
       cardPunched:        false,
       totemCarved:        false,
       exploredLand:       false,
@@ -100,6 +101,7 @@ export class Game {
     const prev = this.state;
     this.state = newState;
     this.emit('stateChange', { prev, next: newState, data });
+    this._refreshProgress();
   }
 
   // ─── Quiz ──────────────────────────────────────────────────────────────────
@@ -266,6 +268,7 @@ export class Game {
     if (this.flags.sburbInstalled) return;
     this.flags.sburbInstalled = true;
     this.emit('sburbInstalled', {});
+    this._refreshProgress();
     this.transition(STATE.SERVER_CONNECT);
   }
 
@@ -273,6 +276,7 @@ export class Game {
   serverConnect() {
     this.flags.serverConnected = true;
     this.emit('serverConnected', { server: this.player.server });
+    this._refreshProgress();
     setTimeout(() => this.transition(STATE.PHERNALIA), 2000);
   }
 
@@ -291,6 +295,7 @@ export class Game {
 
     this.player.phernalidDeployed.push(phernaId);
     this.emit('phernaDeployed', { phernalia });
+    this._refreshProgress();
 
     if (phernaId === 'cruxtruder') {
       this._openCruxtruder();
@@ -326,12 +331,14 @@ export class Game {
     }
 
     this.emit('notification', { text: `${this.player.sprite.name} formed! ${obj.power}`, type: 'yellow' });
+    this._refreshProgress();
     return { ok: true, sprite: this.player.sprite };
   }
 
   // ─── Countdown ─────────────────────────────────────────────────────────────
   _startCountdown() {
     this.flags.countdownActive = true;
+    this._refreshProgress();
     this.countdownTimer = setInterval(() => {
       this.countdownLeft -= 1;
       this.emit('countdownTick', { seconds: this.countdownLeft });
@@ -346,11 +353,14 @@ export class Game {
       clearInterval(this.countdownTimer);
       this.countdownTimer = null;
     }
+    this.flags.countdownActive = false;
+    this._refreshProgress();
   }
 
   _meteorsHit() {
     this.stopCountdown();
     if (!this.flags.hasEntered) {
+      this.flags.entryFailed = true;
       this.emit('meteorsHit', {});
       // Game over — but let the scene handle the animation/retry
       this.emit('gameOver', { reason: 'The meteors destroyed your home before you could enter.' });
@@ -389,6 +399,7 @@ export class Game {
     this.flags.alchemiterUsed   = true;
     this.emit('entryItemCreated', { item: entryItem });
     this.emit('notification', { text: `${entryItem.name} created! Now smash it to enter the Medium.`, type: 'yellow' });
+    this._refreshProgress();
     return { ok: true, item: entryItem };
   }
 
@@ -399,7 +410,9 @@ export class Game {
     }
     this.stopCountdown();
     this.flags.hasEntered   = true;
+    this.flags.entryFailed  = false;
     this.player.hasEntered  = true;
+    this._refreshProgress();
     this.transition(STATE.ENTRY);
     setTimeout(() => this.transition(STATE.MEDIUM), 5000);
     return { ok: true };
@@ -521,7 +534,15 @@ export class Game {
 
     // Quest progress
     this.player.questProgress = Math.min(100, this.player.questProgress + 10);
+    this.flags.underlingKills = (this.flags.underlingKills || 0) + 1;
+    this.flags.exploredLand = true;
     this.emit('questProgress', { progress: this.player.questProgress });
+
+    if (s.enemy.id === 'black_king') {
+      this.flags.blackKingDefeated = true;
+      this.emit('notification', { text: 'THE BLACK KING FALLS. The Ultimate Reward is now within reach.', type: 'yellow' });
+    }
+    this._refreshProgress();
   }
 
   _handleDeath() {
@@ -545,12 +566,14 @@ export class Game {
   dreamSelfWake() {
     this.flags.dreamSelfAwoken = true;
     this.player.dreamSelfAwake = true;
+    this._refreshProgress();
     this.transition(STATE.DREAMING);
     this.emit('dreamSelfAwoken', { moon: this.player.dreamMoon });
   }
 
   viewSkaia() {
     this.player.skaiaVisionsUnlocked = true;
+    this._refreshProgress();
     this.transition(STATE.SKAIA);
     const vision = CONFIG.SKAIA_VISIONS[this.skaiaVisionIdx % CONFIG.SKAIA_VISIONS.length];
     this.skaiaVisionIdx += 1;
@@ -565,6 +588,7 @@ export class Game {
     }
     this.player.ascendGodTier();
     this.flags.godTierAscended = true;
+    this._refreshProgress();
     this.transition(STATE.GOD_TIER);
     this.emit('godTierAscended', { player: this.player });
     return true;
@@ -573,14 +597,25 @@ export class Game {
   // ─── Quest progress ────────────────────────────────────────────────────────
   advanceQuest(amount = 15) {
     this.player.questProgress = Math.min(100, this.player.questProgress + amount);
+    this.flags.metConsorts = true;
     this.emit('questProgress', { progress: this.player.questProgress });
     if (this.player.questProgress >= 100) {
       this.emit('notification', { text: 'QUEST COMPLETE. The Quest Bed awaits.', type: 'yellow' });
     }
+    this._refreshProgress();
   }
 
   // ─── Black King ────────────────────────────────────────────────────────────
   startBlackKingBattle() {
+    if (this.player.questProgress < 80) {
+      return { ok: false, reason: 'Your land quest is not complete enough to challenge the Black King.' };
+    }
+    if (this.player.rung < 10) {
+      this.emit('notification', {
+        text: 'WARNING: Rung 10+ is strongly recommended before facing the Black King.',
+        type: 'red',
+      });
+    }
     const bk = JSON.parse(JSON.stringify(CONFIG.BLACK_KING));
     // Scale with prototypings
     const protos = this.player.kernelspriteProto.length;
@@ -599,11 +634,113 @@ export class Game {
       enemy: bk, turn: 'player', log: [], fled: false, over: false, won: false,
     };
     this.transition(STATE.STRIFE, { enemy: bk, isFinalBoss: true });
+    return { ok: true, enemy: bk };
   }
 
   winGame() {
+    this.flags.blackKingDefeated = true;
+    this.flags.ultimateRewardClaimed = true;
+    this._refreshProgress();
     this.transition(STATE.ENDING);
     this.emit('victory', { player: this.player });
+  }
+
+  markCardPunched() {
+    this.flags.cardPunched = true;
+    this._refreshProgress();
+    return { ok: true };
+  }
+
+  markTotemCarved() {
+    this.flags.totemCarved = true;
+    this._refreshProgress();
+    return { ok: true };
+  }
+
+  discoverQuestBed() {
+    this.flags.questBedFound = true;
+    this._refreshProgress();
+    return { ok: true };
+  }
+
+  claimUltimateReward() {
+    if (!this.flags.blackKingDefeated) {
+      return { ok: false, reason: 'Defeat the Black King first.' };
+    }
+    this.flags.ultimateRewardClaimed = true;
+    this._refreshProgress();
+    this.emit('notification', { text: 'ULTIMATE REWARD CLAIMED. A new universe is born.', type: 'yellow' });
+    return { ok: true };
+  }
+
+  sessionSnapshot() {
+    if (!this.player) return null;
+    return {
+      player: {
+        class: this.player.playerClass,
+        aspect: this.player.aspect,
+        moon: this.player.dreamMoon,
+        strifeSpecibus: this.player.strifeName,
+        modus: this.player.sylladexModus,
+        rung: this.player.rung,
+        xp: this.player.xp,
+        hp: this.player.hp,
+        maxHp: this.player.maxHp,
+        atk: this.player.totalAtk(),
+        def: this.player.def,
+        godTier: this.player.godTier,
+      },
+      session: {
+        prototypingCount: this.player.kernelspriteProto.length,
+        prototypingTraits: this.player.kernelspriteProto.map(p => p.id || p.name),
+        countdownActive: this.flags.countdownActive,
+        countdownLeft: this.countdownLeft,
+        phernaliaDeployed: [...this.player.phernalidDeployed],
+        entrySuccess: this.flags.hasEntered,
+        entryFailed: this.flags.entryFailed,
+      },
+      quest: {
+        progress: this.player.questProgress,
+        exploredLand: this.flags.exploredLand,
+        metConsorts: this.flags.metConsorts,
+        questBedFound: this.flags.questBedFound,
+      },
+      combat: {
+        kills: this.flags.underlingKills,
+        critChance: 0.1,
+        fleeChance: 0.6,
+        blackKingScaling: {
+          hpMult: 1 + this.player.kernelspriteProto.length * 0.5,
+          atkMult: 1 + this.player.kernelspriteProto.length * 0.3,
+        },
+      },
+    };
+  }
+
+  _stageLabel(stage) {
+    switch (stage) {
+      case STAGE.PRE_ENTRY: return 'Pre-Entry';
+      case STAGE.MEDIUM: return 'Medium';
+      case STAGE.LATE_GAME: return 'Late-Game';
+      case STAGE.FINAL: return 'Finale';
+      case STAGE.COMPLETE: return 'Complete';
+      default: return 'Unknown';
+    }
+  }
+
+  _refreshProgress() {
+    if (!this.objectives || !this.player) return;
+    this.objectives.tick(this.player, this.flags);
+    const stageProgress = this.objectives.stageProgress();
+    const current = this.objectives.currentObjective();
+    this.emit('objectiveUpdate', {
+      stage: this.objectives.stage,
+      stageLabel: this._stageLabel(this.objectives.stage),
+      stageProgress,
+      currentObjective: current,
+      hints: this.objectives.activeHints(),
+      variables: this.sessionSnapshot(),
+    });
   }
 
   // ─── Utility ──────────────────────────────────────────────────────────────
