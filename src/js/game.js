@@ -12,6 +12,7 @@
 import CONFIG from './config.js';
 import { Player } from './player.js';
 import { QuizEngine } from './quiz.js';
+import { ObjectivesEngine, STAGE } from './objectives.js';
 
 // ─── Game States ──────────────────────────────────────────────────────────────
 export const STATE = {
@@ -52,6 +53,7 @@ export class Game {
     this.pesterlogs     = [];     // all chat messages shown so far
     this.notifications  = [];
     this.skaiaVisionIdx = 0;
+    this.objectives     = null;
 
     // Persistent flags
     this.flags = {
@@ -66,6 +68,15 @@ export class Game {
       hasEntered:         false,
       dreamSelfAwoken:    false,
       godTierAscended:    false,
+      countdownActive:    false,
+      cardPunched:        false,
+      totemCarved:        false,
+      exploredLand:       false,
+      metConsorts:        false,
+      underlingKills:     0,
+      questBedFound:      false,
+      blackKingDefeated:  false,
+      ultimateRewardClaimed: false,
     };
   }
 
@@ -142,6 +153,14 @@ export class Game {
         this._applyQuizBonuses(this.player);
       }
     }
+    this.objectives = new ObjectivesEngine(this.player);
+    this.objectives.on('objectiveComplete', ({ obj }) => {
+      this.emit('notification', { text: `OBJECTIVE COMPLETE: ${obj.title}`, type: 'green' });
+    });
+    this.objectives.on('stageAdvance', ({ to }) => {
+      this.emit('notification', { text: `OBJECTIVES ADVANCED: ${this._stageLabel(to)}`, type: 'yellow' });
+    });
+    this._refreshProgress();
     this.transition(STATE.PROLOGUE, { player: this.player });
   }
 
